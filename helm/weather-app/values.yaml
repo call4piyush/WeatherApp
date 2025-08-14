@@ -1,0 +1,338 @@
+# Global configuration
+global:
+  environment: staging
+  imageRegistry: ghcr.io
+  imagePullSecrets: []
+  storageClass: ""
+
+# Backend configuration
+backend:
+  enabled: true
+  name: weather-backend
+  
+  image:
+    registry: ghcr.io
+    repository: call4piyush/weatherapp/weather-backend
+    tag: latest
+    pullPolicy: Always
+    pullSecrets: []
+
+  replicaCount: 2
+  
+  service:
+    type: ClusterIP
+    port: 8080
+    targetPort: 8080
+    annotations: {}
+
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    hosts:
+      - host: api.weather-app.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: weather-backend-tls
+        hosts:
+          - api.weather-app.example.com
+
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  podSecurityContext:
+    fsGroup: 1000
+    runAsNonRoot: true
+    runAsUser: 1000
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1000
+
+  livenessProbe:
+    httpGet:
+      path: /actuator/health/liveness
+      port: 8080
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /actuator/health/readiness
+      port: 8080
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  env:
+    SPRING_PROFILES_ACTIVE: kubernetes
+    MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,info,metrics,prometheus
+    MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: always
+
+  envFrom:
+    - secretRef:
+        name: weather-app-secrets
+    - configMapRef:
+        name: weather-app-config
+
+# Frontend configuration
+frontend:
+  enabled: true
+  name: weather-frontend
+  
+  image:
+    registry: ghcr.io
+    repository: call4piyush/weatherapp/weather-frontend
+    tag: latest
+    pullPolicy: Always
+    pullSecrets: []
+
+  replicaCount: 3
+  
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 80
+    annotations: {}
+
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    hosts:
+      - host: weather-app.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: weather-frontend-tls
+        hosts:
+          - weather-app.example.com
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 15
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  podSecurityContext:
+    fsGroup: 101
+    runAsNonRoot: true
+    runAsUser: 101
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 101
+
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 80
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /
+      port: 80
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# PostgreSQL configuration (using Bitnami chart)
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "postgres123"
+    username: "weatheruser"
+    password: "weatherpass"
+    database: "weatherdb"
+  
+  architecture: standalone
+  
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: ""
+    
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+
+    podSecurityContext:
+      enabled: true
+      fsGroup: 1001
+
+    containerSecurityContext:
+      enabled: true
+      runAsUser: 1001
+      runAsNonRoot: true
+
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+# External PostgreSQL (if not using built-in)
+externalDatabase:
+  enabled: false
+  host: ""
+  port: 5432
+  username: weatheruser
+  database: weatherdb
+  existingSecret: ""
+  existingSecretPasswordKey: ""
+
+# ConfigMap configuration
+config:
+  # Application configuration
+  application:
+    name: "Weather Forecast App"
+    version: "1.0.0"
+    description: "Comprehensive weather forecast application"
+  
+  # Weather API configuration
+  weather:
+    cache:
+      ttl: 600 # 10 minutes
+    forecast:
+      days: 3
+    fallback:
+      enabled: true
+      dataAgeThreshold: 1440 # 24 hours
+  
+  # City search configuration
+  city:
+    search:
+      cache:
+        ttl: 3600 # 1 hour
+      maxResults: 10
+      minQueryLength: 2
+
+# Secrets configuration
+secrets:
+  # OpenWeatherMap API key
+  openweatherApiKey: ""
+  
+  # Database credentials (if using external DB)
+  databasePassword: ""
+  
+  # JWT secret for authentication
+  jwtSecret: ""
+
+# ServiceMonitor for Prometheus
+serviceMonitor:
+  enabled: true
+  namespace: ""
+  labels: {}
+  interval: 30s
+  scrapeTimeout: 10s
+  path: /actuator/prometheus
+
+# Network Policies
+networkPolicy:
+  enabled: false
+  ingress: []
+  egress: []
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  # maxUnavailable: 1
+
+# RBAC
+rbac:
+  create: true
+
+# Service Account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Init containers
+initContainers:
+  enabled: false
+  image:
+    registry: docker.io
+    repository: busybox
+    tag: latest
+  command: []
+
+# Additional volumes
+volumes: []
+
+# Additional volume mounts
+volumeMounts: []
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod labels
+podLabels: {}
+
+# Deployment strategy
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 25%
+    maxSurge: 25% 

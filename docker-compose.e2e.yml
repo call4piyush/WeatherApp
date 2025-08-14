@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: weather-postgres-e2e
+    environment:
+      POSTGRES_DB: weatherdb
+      POSTGRES_USER: weatheruser
+      POSTGRES_PASSWORD: weatherpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_e2e:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U weatheruser -d weatherdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - weather-network
+
+  backend:
+    image: ${BACKEND_IMAGE:-ghcr.io/call4piyush/weatherapp/weather-backend:latest}
+    container_name: weather-backend-e2e
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      DB_USERNAME: weatheruser
+      DB_PASSWORD: weatherpass
+      OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/weatherdb
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - weather-network
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-ghcr.io/call4piyush/weatherapp/weather-frontend:latest}
+    container_name: weather-frontend-e2e
+    environment:
+      API_URL: http://backend:8080
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - weather-network
+
+volumes:
+  postgres_data_e2e:
+    driver: local
+
+networks:
+  weather-network:
+    driver: bridge 

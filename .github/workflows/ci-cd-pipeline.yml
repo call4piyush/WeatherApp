@@ -1,0 +1,574 @@
+name: 🚀 CI/CD Pipeline - Build, Test & Deploy
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME_BACKEND: ${{ github.repository }}/weather-backend
+  IMAGE_NAME_FRONTEND: ${{ github.repository }}/weather-frontend
+  HELM_VERSION: v3.12.0
+  KUBECTL_VERSION: v1.28.0
+
+jobs:
+  # ==================== BACKEND JOBS ====================
+  backend-test:
+    name: 🧪 Backend Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: weatherdb_test
+          POSTGRES_USER: weatheruser
+          POSTGRES_PASSWORD: weatherpass
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: ☕ Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: 📦 Cache Maven Dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+
+    - name: 🔧 Make Maven Wrapper Executable
+      working-directory: ./backend
+      run: chmod +x ./mvnw
+
+    - name: 🧪 Run Unit Tests
+      working-directory: ./backend
+      run: ./mvnw clean test -Dspring.profiles.active=test
+      env:
+        DB_USERNAME: weatheruser
+        DB_PASSWORD: weatherpass
+        OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+
+    - name: 🧪 Run Integration Tests
+      working-directory: ./backend
+      run: ./mvnw verify -Dspring.profiles.active=test
+      env:
+        DB_USERNAME: weatheruser
+        DB_PASSWORD: weatherpass
+        OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+
+    - name: 📊 Generate Test Report
+      uses: dorny/test-reporter@v1
+      if: success() || failure()
+      with:
+        name: Backend Test Results
+        path: backend/target/surefire-reports/*.xml
+        reporter: java-junit
+
+    - name: 📈 Generate Code Coverage Report
+      working-directory: ./backend
+      run: ./mvnw jacoco:report
+
+    - name: ☂️ Upload Coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./backend/target/site/jacoco/jacoco.xml
+        flags: backend
+        name: backend-coverage
+
+    - name: 🔍 SonarQube Analysis
+      if: github.event_name != 'pull_request'
+      working-directory: ./backend
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      run: |
+        if [ -n "$SONAR_TOKEN" ]; then
+          ./mvnw sonar:sonar \
+            -Dsonar.projectKey=weather-app-backend \
+            -Dsonar.organization=${{ github.repository_owner }} \
+            -Dsonar.host.url=https://sonarcloud.io
+        fi
+
+  backend-build:
+    name: 🏗️ Build Backend
+    runs-on: ubuntu-latest
+    needs: backend-test
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tag: ${{ steps.meta.outputs.tags }}
+
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: ☕ Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: 📦 Cache Maven Dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+
+    - name: 🔧 Make Maven Wrapper Executable
+      working-directory: ./backend
+      run: chmod +x ./mvnw
+
+    - name: 🏗️ Build Application
+      working-directory: ./backend
+      run: ./mvnw clean package -DskipTests
+
+    - name: 🐳 Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: 🔐 Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 🏷️ Extract Metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: 🏗️ Build and Push Docker Image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: ./backend
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  # ==================== FRONTEND JOBS ====================
+  frontend-test:
+    name: 🧪 Frontend Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🟢 Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: 📦 Install Dependencies
+      working-directory: ./frontend
+      run: npm ci
+
+    - name: 🔍 Lint Code
+      working-directory: ./frontend
+      run: npm run lint
+
+    - name: 🧪 Run Unit Tests
+      working-directory: ./frontend
+      run: npm run test -- --watch=false --browsers=ChromeHeadless --code-coverage
+
+    - name: 📊 Upload Coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./frontend/coverage/lcov.info
+        flags: frontend
+        name: frontend-coverage
+
+    - name: 🔍 SonarQube Analysis
+      if: github.event_name != 'pull_request'
+      uses: sonarqube-quality-gate-action@master
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      with:
+        scanMetadataReportFile: frontend/coverage/sonar-report.json
+
+  frontend-build:
+    name: 🏗️ Build Frontend
+    runs-on: ubuntu-latest
+    needs: frontend-test
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tag: ${{ steps.meta.outputs.tags }}
+
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🟢 Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: 📦 Install Dependencies
+      working-directory: ./frontend
+      run: npm ci
+
+    - name: 🏗️ Build Application
+      working-directory: ./frontend
+      run: npm run build:prod
+
+    - name: 🐳 Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: 🔐 Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 🏷️ Extract Metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: 🏗️ Build and Push Docker Image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: ./frontend
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  # ==================== E2E TESTING ====================
+  e2e-tests:
+    name: 🎭 End-to-End Tests
+    runs-on: ubuntu-latest
+    needs: [backend-build, frontend-build]
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: weatherdb
+          POSTGRES_USER: weatheruser
+          POSTGRES_PASSWORD: weatherpass
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🐳 Set up Docker Compose
+      run: |
+        sudo curl -L "https://github.com/docker/compose/releases/download/v2.21.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+        sudo chmod +x /usr/local/bin/docker-compose
+
+    - name: 🔐 Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 🚀 Start Application Stack
+      run: |
+        export BACKEND_IMAGE="${{ needs.backend-build.outputs.image-tag }}"
+        export FRONTEND_IMAGE="${{ needs.frontend-build.outputs.image-tag }}"
+        docker-compose -f docker-compose.e2e.yml up -d
+      env:
+        OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+
+    - name: ⏳ Wait for Services
+      run: |
+        timeout 300 bash -c 'until curl -f http://localhost:8080/actuator/health; do sleep 5; done'
+        timeout 300 bash -c 'until curl -f http://localhost; do sleep 5; done'
+
+    - name: 🟢 Set up Node.js for E2E
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: e2e/package-lock.json
+
+    - name: 📦 Install E2E Dependencies
+      working-directory: ./e2e
+      run: npm ci
+
+    - name: 🎭 Install Playwright Browsers
+      working-directory: ./e2e
+      run: npx playwright install --with-deps
+
+    - name: 🧪 Run E2E Tests
+      working-directory: ./e2e
+      run: npx playwright test
+      env:
+        BASE_URL: http://localhost
+        API_URL: http://localhost:8080
+
+    - name: 📊 Upload E2E Test Results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: e2e-test-results
+        path: e2e/test-results/
+        retention-days: 7
+
+    - name: 📊 Upload E2E Test Report
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: e2e-playwright-report
+        path: e2e/playwright-report/
+        retention-days: 7
+
+    - name: 🛑 Stop Application Stack
+      if: always()
+      run: docker-compose -f docker-compose.e2e.yml down -v
+
+  # ==================== SECURITY SCANNING ====================
+  security-scan:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    needs: [backend-build, frontend-build]
+    if: github.event_name != 'pull_request'
+
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🔍 Run Trivy Vulnerability Scanner - Backend
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ needs.backend-build.outputs.image-tag }}
+        format: 'sarif'
+        output: 'backend-trivy-results.sarif'
+
+    - name: 🔍 Run Trivy Vulnerability Scanner - Frontend
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ needs.frontend-build.outputs.image-tag }}
+        format: 'sarif'
+        output: 'frontend-trivy-results.sarif'
+
+    - name: 📤 Upload Trivy Scan Results to GitHub Security
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: '.'
+
+  # ==================== HELM CHART PREPARATION ====================
+  prepare-helm:
+    name: 📦 Prepare Helm Charts
+    runs-on: ubuntu-latest
+    needs: [backend-build, frontend-build, e2e-tests]
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: ⚙️ Install Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: ${{ env.HELM_VERSION }}
+
+    - name: 🔍 Lint Helm Charts
+      run: |
+        helm lint ./helm/weather-app
+        helm template weather-app ./helm/weather-app --values ./helm/weather-app/values-staging.yaml > /dev/null
+        helm template weather-app ./helm/weather-app --values ./helm/weather-app/values-production.yaml > /dev/null
+
+    - name: 📦 Package Helm Chart
+      run: |
+        helm package ./helm/weather-app --version ${{ github.sha }} --app-version ${{ github.sha }}
+
+    - name: 📤 Upload Helm Chart Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: helm-chart
+        path: weather-app-*.tgz
+        retention-days: 30
+
+  # ==================== DEPLOYMENT JOBS ====================
+  deploy-staging:
+    name: 🚀 Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [prepare-helm, security-scan]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: staging
+      url: https://weather-app-staging.k8s.example.com
+
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: ⚙️ Install Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: ${{ env.HELM_VERSION }}
+
+    - name: ⚙️ Install kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: ${{ env.KUBECTL_VERSION }}
+
+    - name: 🔐 Configure Kubernetes Context
+      run: |
+        mkdir -p ~/.kube
+        echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > ~/.kube/config
+        chmod 600 ~/.kube/config
+
+    - name: 📥 Download Helm Chart
+      uses: actions/download-artifact@v3
+      with:
+        name: helm-chart
+
+    - name: 🚀 Deploy to Staging
+      run: |
+        helm upgrade --install weather-app-staging ./weather-app-*.tgz \
+          --namespace weather-app-staging \
+          --create-namespace \
+          --values ./helm/weather-app/values-staging.yaml \
+          --set backend.image.tag=${{ github.sha }} \
+          --set frontend.image.tag=${{ github.sha }} \
+          --set global.environment=staging \
+          --wait --timeout=10m
+
+    - name: 🧪 Run Smoke Tests
+      run: |
+        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=weather-app-backend -n weather-app-staging --timeout=300s
+        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=weather-app-frontend -n weather-app-staging --timeout=300s
+        
+        # Get service URLs
+        BACKEND_URL=$(kubectl get svc weather-app-backend -n weather-app-staging -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        FRONTEND_URL=$(kubectl get svc weather-app-frontend -n weather-app-staging -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        
+        # Basic health checks
+        curl -f http://$BACKEND_URL:8080/actuator/health || exit 1
+        curl -f http://$FRONTEND_URL || exit 1
+
+  deploy-production:
+    name: 🌟 Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [deploy-staging]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
+    environment:
+      name: production
+      url: https://weather-app.k8s.example.com
+
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: ⚙️ Install Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: ${{ env.HELM_VERSION }}
+
+    - name: ⚙️ Install kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: ${{ env.KUBECTL_VERSION }}
+
+    - name: 🔐 Configure Kubernetes Context
+      run: |
+        mkdir -p ~/.kube
+        echo "${{ secrets.KUBE_CONFIG_PRODUCTION }}" | base64 -d > ~/.kube/config
+        chmod 600 ~/.kube/config
+
+    - name: 📥 Download Helm Chart
+      uses: actions/download-artifact@v3
+      with:
+        name: helm-chart
+
+    - name: 🌟 Deploy to Production
+      run: |
+        helm upgrade --install weather-app ./weather-app-*.tgz \
+          --namespace weather-app-production \
+          --create-namespace \
+          --values ./helm/weather-app/values-production.yaml \
+          --set backend.image.tag=${{ github.sha }} \
+          --set frontend.image.tag=${{ github.sha }} \
+          --set global.environment=production \
+          --wait --timeout=15m
+
+    - name: 🧪 Run Production Smoke Tests
+      run: |
+        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=weather-app-backend -n weather-app-production --timeout=300s
+        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=weather-app-frontend -n weather-app-production --timeout=300s
+        
+        # Get service URLs
+        BACKEND_URL=$(kubectl get svc weather-app-backend -n weather-app-production -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        FRONTEND_URL=$(kubectl get svc weather-app-frontend -n weather-app-production -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        
+        # Comprehensive health checks
+        curl -f http://$BACKEND_URL:8080/actuator/health || exit 1
+        curl -f http://$FRONTEND_URL || exit 1
+        curl -f http://$BACKEND_URL:8080/api/v1/weather/health || exit 1
+
+  # ==================== NOTIFICATION ====================
+  notify:
+    name: 📢 Notify Deployment Status
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: always()
+
+    steps:
+    - name: 📢 Slack Notification
+      if: always()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        channel: '#deployments'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        fields: repo,message,commit,author,action,eventName,ref,workflow 

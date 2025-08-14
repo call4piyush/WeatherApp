@@ -1,0 +1,26 @@
+apiVersion: v2
+name: weather-app
+description: A comprehensive weather forecast application with Angular frontend, Spring Boot backend, and PostgreSQL database
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+home: https://github.com/call4piyush/WeatherApp
+sources:
+  - https://github.com/call4piyush/WeatherApp
+maintainers:
+  - name: Weather App Team
+    email: team@weatherapp.com
+keywords:
+  - weather
+  - forecast
+  - angular
+  - spring-boot
+  - postgresql
+  - microservices
+annotations:
+  category: Application
+dependencies:
+  - name: postgresql
+    version: 12.x.x
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled 

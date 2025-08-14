@@ -1,0 +1,168 @@
+# Staging environment configuration
+global:
+  environment: staging
+  imageRegistry: ghcr.io
+  domain: weather-app-staging.k8s.example.com
+
+# Backend configuration for staging
+backend:
+  replicaCount: 2
+  
+  image:
+    tag: main-latest
+    pullPolicy: Always
+
+  ingress:
+    enabled: true
+    hosts:
+      - host: api-staging.weather-app.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: weather-backend-staging-tls
+        hosts:
+          - api-staging.weather-app.example.com
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+
+  env:
+    SPRING_PROFILES_ACTIVE: staging
+    LOGGING_LEVEL_COM_WEATHERAPP: DEBUG
+    MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: always
+
+# Frontend configuration for staging
+frontend:
+  replicaCount: 2
+  
+  image:
+    tag: main-latest
+    pullPolicy: Always
+
+  ingress:
+    enabled: true
+    hosts:
+      - host: weather-app-staging.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: weather-frontend-staging-tls
+        hosts:
+          - weather-app-staging.example.com
+
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+
+# PostgreSQL configuration for staging
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "staging-postgres-password"
+    username: "weatheruser"
+    password: "staging-weather-password"
+    database: "weatherdb"
+  
+  primary:
+    persistence:
+      enabled: true
+      size: 5Gi
+      storageClass: "fast-ssd"
+    
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+# Configuration for staging
+config:
+  weather:
+    cache:
+      ttl: 300 # 5 minutes for faster testing
+    forecast:
+      days: 3
+    fallback:
+      enabled: true
+      dataAgeThreshold: 720 # 12 hours
+
+  city:
+    search:
+      cache:
+        ttl: 1800 # 30 minutes
+      maxResults: 15
+      minQueryLength: 2
+
+# ServiceMonitor for staging
+serviceMonitor:
+  enabled: true
+  interval: 15s
+  scrapeTimeout: 5s
+
+# Pod Disruption Budget for staging
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Network policies for staging
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+  egress:
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 53
+        - protocol: UDP
+          port: 53
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+
+# Pod annotations for staging
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/actuator/prometheus"
+
+# Additional labels for staging
+podLabels:
+  environment: staging
+  team: weather-app
+  version: staging 
