@@ -1,0 +1,1 @@
+{"ast":null,"code":"export const environment = {\n  production: false,\n  apiUrl: 'http://localhost:8080/api/v1',\n  apiTimeout: 10000,\n  cacheTimeout: 30 * 60 * 1000,\n  appName: 'Weather Forecast App',\n  version: '1.0.0'\n};","map":null,"metadata":{},"sourceType":"module","externalDependencies":[]}

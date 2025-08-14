@@ -1,0 +1,128 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: weather-service
+  
+  datasource:
+    url: jdbc:postgresql://localhost:5432/weatherdb
+    username: ${DB_USERNAME:weatheruser}
+    password: ${DB_PASSWORD:weatherpass}
+    driver-class-name: org.postgresql.Driver
+    
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+    defer-datasource-initialization: true
+    
+  cache:
+    type: simple
+    cache-names:
+      - weatherCache
+      - citySearchCache
+    
+  security:
+    user:
+      name: admin
+      password: ${ADMIN_PASSWORD:admin123}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,circuitbreakers,retries,ratelimiters
+  endpoint:
+    health:
+      show-details: always
+  health:
+    circuitbreakers:
+      enabled: true
+    ratelimiters:
+      enabled: true
+
+openweather:
+  api:
+    key: ${OPENWEATHER_API_KEY:d2929e9483efc82c82c32ee7e02d563e}
+    base-url: https://api.openweathermap.org/data/2.5
+    timeout: ${OPENWEATHER_TIMEOUT:10000}
+    connect-timeout: ${OPENWEATHER_CONNECT_TIMEOUT:5000}
+
+# Resilience4j Configuration
+resilience4j:
+  circuitbreaker:
+    instances:
+      openweather-api:
+        registerHealthIndicator: true
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        waitDurationInOpenState: 30s
+        failureRateThreshold: 50
+        eventConsumerBufferSize: 10
+        recordExceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.web.reactive.function.client.WebClientException
+        ignoreExceptions:
+          - java.lang.IllegalArgumentException
+        
+  retry:
+    instances:
+      openweather-api:
+        maxAttempts: 3
+        waitDuration: 1s
+        exponentialBackoffMultiplier: 2
+        retryExceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.web.reactive.function.client.WebClientException
+        ignoreExceptions:
+          - java.lang.IllegalArgumentException
+          
+  ratelimiter:
+    instances:
+      openweather-api:
+        registerHealthIndicator: true
+        limitForPeriod: 60
+        limitRefreshPeriod: 60s
+        timeoutDuration: 5s
+        eventConsumerBufferSize: 100
+        
+  timelimiter:
+    instances:
+      openweather-api:
+        timeoutDuration: 10s
+        cancelRunningFuture: true
+
+logging:
+  level:
+    com.weatherapp: INFO
+    io.github.resilience4j: DEBUG
+    org.springframework.web: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+
+# Application specific properties
+weather:
+  cache:
+    ttl: 600 # 10 minutes in seconds
+  forecast:
+    days: 3
+  fallback:
+    enabled: true
+    data-age-threshold: 1440 # 24 hours in minutes
+
+# City search specific properties
+city:
+  search:
+    cache:
+      ttl: 3600 # 1 hour in seconds
+    max-results: 10
+    min-query-length: 2 

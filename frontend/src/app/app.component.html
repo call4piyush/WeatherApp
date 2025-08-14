@@ -1,0 +1,365 @@
+<div class="app-container" [ngClass]="backgroundClass">
+  <!-- Dynamic Background Effects -->
+  <div class="weather-effects">
+    <div class="weather-particles" [ngClass]="'particles-' + currentWeatherType"></div>
+    <div class="time-overlay" [ngClass]="isDaytime ? 'day-overlay' : 'night-overlay'"></div>
+  </div>
+
+  <div class="container content-wrapper">
+    <!-- Enhanced Header -->
+    <header class="header-section enhanced-header">
+      <div class="header-container">
+        <div class="app-branding">
+          <div class="logo-container">
+            <i class="fas fa-cloud-sun weather-logo animated-logo"></i>
+            <div class="logo-effects"></div>
+          </div>
+          <div class="title-group">
+            <h1 class="app-title gradient-text">
+              <span class="title-main">Weather</span>
+              <span class="title-accent">Forecast</span>
+            </h1>
+            <p class="app-subtitle">
+              <i class="fas fa-magic"></i>
+              Dynamic 3-day forecasts with smart city search
+            </p>
+          </div>
+        </div>
+        
+        <!-- Enhanced Status Bar -->
+        <div class="status-bar">
+          <div class="theme-indicator">
+            <i class="fas" [ngClass]="isDaytime ? 'fa-sun' : 'fa-moon'"></i>
+            <span>{{ isDaytime ? 'Day' : 'Night' }} Mode</span>
+          </div>
+          
+          <!-- Enhanced Offline Mode Toggle -->
+          <div class="offline-toggle premium-toggle">
+            <label class="switch-container">
+              <input type="checkbox" [checked]="offlineMode$ | async" (change)="toggleOfflineMode()">
+              <span class="slider-premium">
+                <span class="slider-icon">
+                  <i class="fas fa-wifi" *ngIf="!(offlineMode$ | async)"></i>
+                  <i class="fas fa-wifi-slash" *ngIf="offlineMode$ | async"></i>
+                </span>
+              </span>
+            </label>
+            <span class="toggle-label-premium">
+              {{(offlineMode$ | async) ? 'Offline Mode' : 'Online Mode'}}
+            </span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Enhanced Search Section -->
+    <section class="search-section enhanced-search-section">
+      <div class="search-container">
+        <div class="autocomplete-container premium-search">
+          <div class="search-box-wrapper">
+            <div class="search-box enhanced-search">
+              <div class="search-icon-container">
+                <i class="fas fa-search search-icon animated-icon"></i>
+                <div class="search-ripple"></div>
+              </div>
+              
+              <input 
+                type="text" 
+                class="form-control search-input premium-input" 
+                placeholder="🌍 Discover weather in any city worldwide..."
+                [(ngModel)]="searchCity"
+                (input)="onSearchInputChange()"
+                (focus)="onInputFocus()"
+                (blur)="onInputBlur()"
+                (keydown)="onKeyDown($event)"
+                [disabled]="(loading$ | async) || false">
+              
+              <div class="search-actions">
+                <div class="loading-spinner premium-spinner" *ngIf="cityLoading$ | async">
+                  <div class="spinner-ring"></div>
+                  <i class="fas fa-globe-americas spinner-icon"></i>
+                </div>
+                
+                <button 
+                  type="button"
+                  class="btn btn-search premium-btn enhanced-btn"
+                  (click)="searchWeather()"
+                  [disabled]="(loading$ | async) || false || !searchCity">
+                  <span class="btn-content">
+                    <i class="fas fa-rocket"></i>
+                    <span>Explore</span>
+                  </span>
+                  <div class="btn-shine"></div>
+                </button>
+              </div>
+            </div>
+
+            <!-- Enhanced Suggestions Dropdown -->
+            <div class="suggestions-dropdown premium-dropdown enhanced-dropdown" 
+                 *ngIf="showSuggestions && citySuggestions.length > 0">
+              <div class="dropdown-header">
+                <i class="fas fa-map-marked-alt"></i>
+                <span>Suggested Locations</span>
+              </div>
+              
+              <div 
+                class="suggestion-item premium-suggestion enhanced-suggestion"
+                [ngClass]="{'selected': i === selectedCityIndex}"
+                *ngFor="let city of citySuggestions; let i = index"
+                (click)="selectCity(city)">
+                
+                <div class="suggestion-content">
+                  <div class="city-main">
+                    <div class="city-icon-wrapper">
+                      <i class="fas fa-map-marker-alt city-icon"></i>
+                      <div class="icon-pulse"></div>
+                    </div>
+                    <div class="city-info">
+                      <span class="city-name">{{ city.name }}</span>
+                      <span class="country-badge">{{ city.country_code }}</span>
+                    </div>
+                  </div>
+                  <div class="city-details">
+                    <span class="location-text">
+                      <span class="state" *ngIf="city.state">{{ city.state }}, </span>
+                      <span class="country">{{ city.country }}</span>
+                    </span>
+                    <div class="coordinates">
+                      <i class="fas fa-compass"></i>
+                      <span>{{ city.latitude | number:'1.2-2' }}, {{ city.longitude | number:'1.2-2' }}</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div class="suggestion-arrow">
+                  <i class="fas fa-chevron-right"></i>
+                </div>
+              </div>
+            </div>
+
+            <!-- Enhanced Error Message -->
+            <div class="alert alert-enhanced premium-alert" *ngIf="cityError">
+              <div class="alert-content">
+                <i class="fas fa-exclamation-triangle alert-icon"></i>
+                <span>{{ cityError }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Enhanced Error Display -->
+    <div class="alert alert-danger premium-alert enhanced-error" *ngIf="error">
+      <div class="alert-wrapper">
+        <i class="fas fa-exclamation-circle alert-icon-large"></i>
+        <div class="alert-text">
+          <strong>Oops!</strong>
+          <span>{{ error }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Enhanced Loading Section -->
+    <div class="loading-section premium-loading enhanced-loading" *ngIf="loading$ | async">
+      <div class="loading-container">
+        <div class="weather-loader">
+          <div class="loader-cloud">
+            <i class="fas fa-cloud"></i>
+          </div>
+          <div class="loader-elements">
+            <div class="rain-drops" *ngIf="currentWeatherType === 'rain'"></div>
+            <div class="snow-flakes" *ngIf="currentWeatherType === 'snow'"></div>
+            <div class="sun-rays" *ngIf="currentWeatherType === 'clear'"></div>
+          </div>
+        </div>
+        <div class="loading-text">
+          <h3>Fetching Weather Magic...</h3>
+          <p>Gathering atmospheric data from around the globe</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Enhanced Weather Results -->
+    <section class="results-section premium-results enhanced-results" 
+             *ngIf="forecasts.length > 0 && !(loading$ | async)">
+      
+      <div class="results-header enhanced-header">
+        <div class="header-main">
+          <h2 class="results-title">
+            <span class="title-icon">
+              <i class="fas fa-thermometer-half"></i>
+            </span>
+            <span class="title-text">
+              Weather Forecast for 
+              <span class="city-highlight">{{ currentCity }}</span>
+            </span>
+          </h2>
+          
+          <!-- Enhanced Cache Status -->
+          <div class="cache-status premium-status" *ngIf="lastSearchResponse">
+            <div class="status-badge-wrapper">
+              <div class="status-badge enhanced-badge"
+                   [ngClass]="lastSearchResponse.from_cache ? 'cache-badge' : 'live-badge'">
+                <i class="fas status-icon" 
+                   [ngClass]="lastSearchResponse.from_cache ? 'fa-database' : 'fa-satellite'"></i>
+                <span class="status-text">
+                  {{ lastSearchResponse.from_cache ? 'Cached Data' : 'Live Data' }}
+                </span>
+                <div class="status-pulse"></div>
+              </div>
+              
+              <div class="timestamp-wrapper">
+                <i class="fas fa-clock"></i>
+                <small class="timestamp">
+                  Updated: {{ lastSearchResponse.timestamp | date:'medium' }}
+                </small>
+              </div>
+            </div>
+            
+            <div class="notice premium-notice enhanced-notice" *ngIf="lastSearchResponse.notice">
+              <i class="fas fa-info-circle notice-icon"></i>
+              <span>{{ lastSearchResponse.notice }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Enhanced Weather Cards Grid -->
+      <div class="weather-grid premium-grid">
+        <div class="weather-card premium-card enhanced-card" 
+             *ngFor="let forecast of forecasts; let i = index">
+          
+          <div class="card-background-effects">
+            <div class="card-gradient"></div>
+            <div class="card-particles"></div>
+          </div>
+          
+          <div class="card-header enhanced-card-header">
+            <div class="date-section">
+              <div class="day-name">
+                {{ forecast.forecastDate | date:'EEEE' }}
+              </div>
+              <div class="date-detail">
+                {{ forecast.forecastDate | date:'MMM d' }}
+              </div>
+            </div>
+            
+            <div class="weather-icon-section">
+              <div class="icon-container enhanced-icon"
+                   [attr.data-weather]="getWeatherType(forecast.description)">
+                <span class="weather-emoji">{{ getWeatherIcon(forecast.description) }}</span>
+                <div class="icon-effects"></div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="card-content enhanced-card-content">
+            <div class="temperature-section">
+              <div class="temp-main">
+                <span class="temp-high">{{ forecast.high_temp | number:'1.0-0' }}°</span>
+                <span class="temp-separator">/</span>
+                <span class="temp-low">{{ forecast.low_temp | number:'1.0-0' }}°</span>
+              </div>
+              <div class="temp-unit">Celsius</div>
+            </div>
+            
+            <div class="description-section">
+              <h4 class="weather-condition">{{ forecast.description | titlecase }}</h4>
+            </div>
+            
+            <div class="details-grid">
+              <div class="detail-item premium-detail">
+                <div class="detail-icon">
+                  <i class="fas fa-tint"></i>
+                </div>
+                <div class="detail-content">
+                  <span class="detail-value">{{ forecast.humidity }}%</span>
+                  <span class="detail-label">Humidity</span>
+                </div>
+              </div>
+              
+              <div class="detail-item premium-detail">
+                <div class="detail-icon">
+                  <i class="fas fa-compress-arrows-alt"></i>
+                </div>
+                <div class="detail-content">
+                  <span class="detail-value">{{ forecast.pressure | number:'1.0-0' }}</span>
+                  <span class="detail-label">hPa</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="card-footer">
+            <div class="forecast-index">Day {{ i + 1 }}</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Enhanced Cached Cities Section -->
+    <section class="cached-cities premium-cached enhanced-cached" 
+             *ngIf="cachedCities.length > 0">
+      <div class="section-header">
+        <h3 class="section-title">
+          <i class="fas fa-history"></i>
+          <span>Recent Searches</span>
+        </h3>
+        <div class="section-decoration"></div>
+      </div>
+      
+      <div class="cached-grid">
+        <button 
+          class="cached-city-btn premium-cached-btn enhanced-cached-btn"
+          *ngFor="let city of cachedCities"
+          (click)="searchCity = city; searchWeather()">
+          <div class="btn-content">
+            <i class="fas fa-map-pin"></i>
+            <span>{{ city }}</span>
+          </div>
+          <div class="btn-hover-effect"></div>
+        </button>
+      </div>
+    </section>
+
+    <!-- Enhanced Footer -->
+    <footer class="footer premium-footer enhanced-footer">
+      <div class="footer-content">
+        <div class="footer-main">
+          <div class="brand-section">
+            <div class="brand-logo">
+              <i class="fas fa-cloud-sun"></i>
+            </div>
+            <div class="brand-text">
+              <p class="copyright">&copy; 2025 Weather App</p>
+              <p class="powered-by">Powered by OpenWeatherMap & Magic ✨</p>
+            </div>
+          </div>
+          
+          <div class="status-section">
+            <div class="connection-status">
+              <span class="status-indicator" [ngClass]="(offlineMode$ | async) ? 'status-offline' : 'status-online'">
+                <i class="fas status-icon" [ngClass]="(offlineMode$ | async) ? 'fa-wifi-slash' : 'fa-wifi'"></i>
+                <span class="status-text">{{ (offlineMode$ | async) ? 'Offline' : 'Online' }}</span>
+                <div class="status-pulse"></div>
+              </span>
+            </div>
+            
+            <div class="theme-info">
+              <i class="fas fa-palette"></i>
+              <span>{{ currentTheme | titlecase }} Theme</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="footer-decoration">
+          <div class="decoration-line"></div>
+          <div class="decoration-dots">
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+</div> 
